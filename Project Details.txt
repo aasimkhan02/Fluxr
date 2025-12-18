@@ -1,0 +1,341 @@
+1 — One-Sentence Summary of the Project
+
+I am building P.A.R.L. (Planet-Scale Adaptive Rate Limiter) — a distributed, multi-region, CRDT-based, self-tuning rate limiter written in Go.
+It supports local-fast decisions (<500µs), global approximate consistency (CRDTs + leases), optional strong consistency, proactive burst prediction (EWMA), and multi-mode overload handling — all while keeping global overshoot strictly bounded.
+
+2 — High-Level Architecture
+Components
+
+Local Fast Path (Go)
+
+in-memory token buckets (lock-free, sharded)
+
+sliding window fallback
+
+handles 99.99% of requests
+
+proactive bucket resizing based on prediction
+
+Prediction Layer
+
+EWMA smoothing
+
+short-window derivative
+
+burst-detection window (3–5 samples)
+
+only runs for top-K hot keys (bounded CPU)
+
+CRDT Replica Layer (Multi-region)
+
+delta PN-Counters for quota usage
+
+delta GCounters for metadata
+
+LWW maps for policy versions
+
+anti-entropy via gossip (memberlist)
+
+Merkle-tree sharded delta synchronization
+
+Lease System (Bounded Overshoot Control)
+
+nodes borrow limited quota from region pool
+
+borrow + repay tracked via CRDT counters
+
+ensures overshoot ≤ sum(region_leases)
+
+prevents global capacity violations
+
+Admission Controller
+
+composes multi-dimensional limits: user, key, org, global
+
+decision rule → Allowed = min(local_est, global_est, org_est, user_est)
+
+three modes: STRICT, SOFT, GRACE
+
+Grace Mode / Load Shedding Manager
+
+activates when CPU > ~70% or global_usage > 90%
+
+probabilistic admission
+
+reduced burst-growth factor
+
+prevents total cluster meltdown
+
+Strong Path (Optional)
+
+requests requiring absolute correctness go through a consensus-backed store (CockroachDB or Raft)
+
+trade-off: higher latency, stronger guarantees
+
+Observability & Replay Engine
+
+Prometheus metrics
+
+OpenTelemetry traces
+
+dashboards per-tenant
+
+replay simulator for real traffic logs
+
+chaos scenarios: burst replay, partitions, node failures
+
+3 — Key Algorithms and Parameters
+EWMA Prediction
+EWMA_next = α * rate_now + (1-α) * EWMA_prev
+
+
+α = 0.2–0.4 (fast-reacting) for hot keys
+
+Derivative calculation every 50–100ms
+
+If derivative > threshold → pre-grow bucket
+
+Burst Window
+
+rolling window of 3–5 samples
+
+detects accelerating bursts
+
+resizes bucket pre-emptively
+
+Token Sizing
+capacity = ceil(EWMA * (1 + grace_factor))
+
+
+grace_factor capped at 0.25
+
+prevented from exceeding lease limits
+
+Leasing
+
+nodes borrow up to lease_local_max per tenant
+
+borrow increases PN-Counter
+
+repay decreases PN-Counter
+
+ensures mathematically bounded overshoot
+
+Consistency Tiers
+
+Approximate (default) — local-only fast path
+
+Eventual + leases — safest scalable path
+
+Strong — CockroachDB consensus, slower
+
+4 — Overshoot Control (Critical Part of System)
+
+To prevent global request floods when data centers diverge:
+
+per-region hard caps
+
+per-tenant lease limits
+
+global backpressure when nearing quota
+
+probabilistic admission as quota exhaustion approaches
+
+hot-key prioritization in gossip
+
+Engineering targets:
+
+overshoot ≤ 2–8%
+
+CRDT convergence for hot keys: 100–300ms
+
+5 — Multi-Dimensional Quota Composition
+
+Dimensions enforced independently:
+
+user
+
+API key
+
+organization
+
+global
+
+Final allowed tokens = minimum of all estimates.
+
+Optimizations:
+
+composite key for O(1) lookup
+
+short-circuit if any dimension is already zero
+
+local shard map for high throughput
+
+6 — Hybrid Sliding Window + Token Bucket
+
+Rules:
+
+token bucket → default for speed & bursts
+
+sliding window → fairness during stable low-variance traffic
+
+switching uses hysteresis to avoid oscillation
+
+7 — Gossip & Membership
+
+Using Memberlist:
+
+node join/leave events
+
+periodic delta exchange (50–200ms)
+
+LWW policy propagation
+
+Merkle trees for efficient anti-entropy
+
+Failure detection: phi accrual.
+
+8 — Observability Requirements
+
+Metrics must include:
+
+per-key EWMA
+
+prediction accuracy
+
+accept/reject rate
+
+CRDT merge backlog
+
+lease borrow/repay
+
+fast-path latency histograms
+
+p50 / p95 / p99 end-to-end
+
+Dashboards:
+
+Hot keys
+
+Regional usage
+
+Consistency lag
+
+Modes: strict/soft/grace
+
+9 — API (gRPC)
+Check()
+
+tenant_id
+
+api_key
+
+user_id
+
+tokens
+
+consistency tier
+
+Report()
+
+async usage reporting
+
+Observe()
+
+used in simulation mode to visualize cluster state
+
+🔟 — Minimal Folder Structure
+/parl
+  /cmd/server
+  /proto
+  /server
+  /local
+  /predictor
+  /crdt
+  /cluster
+  /lease
+  /admission
+  /metrics
+  /policy
+  /simulator
+  /deploy
+  /docs
+
+1️⃣1 — Build Phases
+Phase 1 (Week 1–2)
+
+local fast path
+
+token bucket
+
+EWMA predictor
+
+gRPC Check()
+
+Phase 2 (Week 3–4)
+
+CRDT PN-Counter
+
+gossip layer
+
+delta merging
+
+multi-dimensional limits
+
+Phase 3 (Week 5–6)
+
+leasing
+
+grace mode
+
+observability
+
+replay simulator
+
+Phase 4 (Week 7)
+
+deployment (K8s)
+
+dashboards
+
+documentation
+
+1️⃣2 — Interview Soundbites (Copy/Paste into answers)
+
+“We trade a bounded and tunable overshoot for sub-millisecond availability and global coordination without consensus.”
+
+“Local-fast + leases + CRDTs gives us 3 consistency tiers with predictable correctness envelopes.”
+
+“Prediction is not ML — it's EWMA + derivative trend detection on top-K hot keys for microburst anticipation.”
+
+“Global overshoot is mathematically bounded by regional lease caps.”
+
+“We achieve CRDT convergence for hot keys within 100–300ms under typical WAN conditions.”
+
+1️⃣3 — Why This Project Matters
+
+This project showcases:
+
+distributed systems
+
+CRDTs
+
+EWMA prediction
+
+gossip systems
+
+load shedding
+
+strong vs eventual consistency
+
+quota management
+
+Go concurrency
+
+multi-region failover
+
+observability
+
+performance engineering
+
+This is effectively a Cloudflare/AWS-grade internal system built by one engineer.
