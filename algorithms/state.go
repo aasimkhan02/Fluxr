@@ -1,7 +1,7 @@
 package main
 
 type rateLimterState struct {
-	TokenBucket *tokenBucket
-	SlidingWindow *slidingWindow
-	Ewma *ewma
+	tokenBucket *tokenBucket
+	slidingWindow *slidingWindow
+	EWMA *EWMA
 }
